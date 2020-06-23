@@ -24,8 +24,40 @@ __copyright__ = "The GNU General Public License v3.0"
 from psaw import PushshiftAPI
 from datetime import datetime, timedelta
 import re
+import constants as const
+from pytz import timezone
+import time
+import json
+from pathlib import Path
+from pyrh import Robinhood
 
+with open('user_details.txt') as f:
+    user_ids = f.readlines()
+    user_ids = [x.strip() for x in user_ids]
 
+def init_robinhood():
+    global my_trader
+    my_trader = Robinhood()
+    my_trader.login(username=user_ids[0], password=user_ids[1])
+
+def robinhood_calls(command, stk):
+    exec_flag = False
+    value_to_return = None
+    #try_counter = 0
+    executable = "my_trader." + command
+    #print(executable)
+    #while exec_flag == False:# and try_counter < 1:
+    try:
+            value_to_return = eval(executable)
+            print(ss)
+            exec_flag = True
+    except Exception:
+            import traceback
+            #print (str(datetime.utcnow()) + ' ***ROBINHOOD CALL EXCEPTION***: ' + stk + ", " + command + ", " + traceback.format_exc() + ": Waiting for 10 seconds before re-attempting..")
+            #try_counter = try_counter + 1
+            #time.sleep(10)
+    return value_to_return
+        
 def get_submission(n):
     """Returns a generator for the submission in past n days"""
     api = PushshiftAPI()
@@ -44,15 +76,11 @@ def get_freq_list(gen):
     :param int gen: The generator for subreddit submission
     :returns:
         - all_tbl - frequency table for all stock mentions
-        - title_tbl - frequency table for stock mentions in titles
-        - selftext_tbl - frequency table for all stock metninos in selftext
     """
 
     # Python regex pattern for stocks codes
     pattern = "[A-Z]{3,4}"
     # Dictionary containing the summaries
-    title_dict = {}
-    selftext_dict = {}
     all_dict = {}
 
     for i in gen:
@@ -60,11 +88,6 @@ def get_freq_list(gen):
             title = ' ' + i.title + ' '
             title_extracted = re.findall(pattern, title)
             for j in title_extracted:
-                if j in title_dict:
-                    title_dict[j] += 1
-                else:
-                    title_dict[j] = 1
-
                 if j in all_dict:
                     all_dict[j] += 1
                 else:
@@ -74,23 +97,15 @@ def get_freq_list(gen):
             selftext = ' ' + i.selftext + ' '
             selftext_extracted = re.findall(pattern, selftext)
             for j in selftext_extracted:
-                if j in selftext_dict:
-                    selftext_dict[j] += 1
-                else:
-                    selftext_dict[j] = 1
-
                 if j in all_dict:
                     all_dict[j] += 1
                 else:
                     all_dict[j] = 1
 
-    title_tbl = sorted(title_dict.items(), key=lambda x: x[1], reverse=True)
-    selftext_tbl = sorted(selftext_dict.items(), key=lambda x: x[1],
-                          reverse=True)
     all_tbl = sorted(all_dict.items(), key=lambda x: x[1], reverse=True)
+    all_tbl = [list(item) for item in all_tbl] 
 
-    return all_tbl, title_tbl, selftext_tbl
-
+    return all_tbl
 
 def filter_tbl(tbl, min):
     """
@@ -103,24 +118,159 @@ def filter_tbl(tbl, min):
     BANNED_WORDS = [
         'THE', 'FUCK', 'ING', 'CEO', 'USD', 'WSB', 'FDA', 'NEWS', 'FOR', 'YOU',
         'BUY', 'HIGH', 'ADS', 'FOMO', 'THIS', 'OTC', 'ELI', 'IMO',
-        'CBS', 'SEC', 'NOW', 'OVER', 'ROPE', 'MOON'
+        'CBS', 'SEC', 'NOW', 'OVER', 'ROPE', 'MOON', 'NYSE', 'ESPN','HELP','ETF','FCC','FAA','USPS'
     ]
-    tbl = [row for row in tbl if row[1] > min]
-    tbl = [row for row in tbl if row[0] not in BANNED_WORDS]
-    return tbl
-
-
-def print_tbl(tbl):
-    print("Code\tFrequency")
+    tbl = [row for row in tbl if (int(row[1]) > min and row[0] not in BANNED_WORDS)]
+    #tbl = [row for row in tbl if row[0] not in BANNED_WORDS]
     for row in tbl:
+        quote = robinhood_calls("quote_data('" + row[0] + "')",row[0])
+        fund = robinhood_calls("get_fundamentals('" + row[0] + "')",row[0])
+        #print(quote)
+        if (fund != None):
+            row.append(fund['volume'])
+            row.append(quote['last_trade_price'])
+        else:
+            row.append(0)
+            row.append(0)
+        #print(row)
+        #print(my_trader.get_fundamentals(row[0]))
+    return tbl
+    
+def prev_compare(new_tbl,old_tbl):
+    count_tbl = []
+    for new_row in new_tbl:
+        count_tbl.append([0,0,0])
+        for old_row in old_tbl:
+            if (new_row[0] == old_row[0]):
+                count_tbl[len(count_tbl)-1][0] = new_row[1] - old_row[1]
+                if (old_row[2] != 0):
+                    count_tbl[len(count_tbl)-1][1] = 100*(int(float(new_row[2])) /int(float(old_row[2])) -1)
+                else:
+                    count_tbl[len(count_tbl)-1][1] = 0
+                if (old_row[3] != 0):
+                    count_tbl[len(count_tbl)-1][2] = 100.0*(float(new_row[3])/float(old_row[3]) - 1.0)
+                else:
+                    count_tbl[len(count_tbl)-1][2] = 0                
+    return count_tbl
+    
+def long_compare(new_tbl, old_data):
+    long_count_tbl = []
+    for key, value in sorted(list(old_data.items()), key=lambda x:x[0].lower(), reverse=True):
+        if (datetime.now(timezone('EST')) - datetime.fromisoformat(key)).total_seconds() > const.long_duration_hrs*3600:
+            long_count_tbl = []
+            long_count_tbl = prev_compare(new_tbl,old_data[key])
+            break
+    return long_count_tbl     
+    
+def text_colorizer(num):
+    string_to_print = str(num)
+    if num > 0.0:
+        string_to_print = "\033[1;32;40m " + str(num) + "\033[0m"
+    elif num < 0.0:
+        string_to_print = "\033[1;31;40m " + str(num) + "\033[0m"
+    return string_to_print
+
+def clean_log(log_data):
+    for key in list(log_data):
+        if ((datetime.now(timezone('EST')) - datetime.fromisoformat(key)).total_seconds()) > (3600*const.data_expiry_duration_hrs):
+            log_data.pop(key)
+    return log_data
+
+def clean_append_log(tbl, file_name):
+    newitem = {str(datetime.now(timezone('EST'))): tbl}
+    oldData = {}
+    if Path(file_name).is_file():
+        with open(file_name, 'r') as json_file:
+            data = json_file.read()
+            if (data != None and data != '' and data != 'null' and data != 'l'):
+                oldData = json.loads(data)
+                #print ("printing oldData: ")
+                #print (oldData)
+                oldData = clean_log(oldData)
+    with open(file_name, 'w') as json_file:
+        # convert from Python dict-like structure to JSON format
+        oldData[str(datetime.now(timezone('EST')))] = tbl
+        #print(oldData)
+        jsoned_data = json.dumps(oldData)
+        json_file.write(jsoned_data)
+     #with open(file_name, 'a') as outfile:
+     #   json.dump(json_dict, outfile)
+    return oldData
+
+def print_tbl(tbl, short_diff,long_diff):
+    #file = open(file_name, 'w') 
+    print(datetime.now(timezone('EST')))
+    print("Rank\tStock\tMentions\t" + str(int(const.short_duration_min)) + " min. diff\t"  + str(int(const.long_duration_hrs)) + " hr. diff\tVolume\t\t" + str(int(const.short_duration_min)) + " min. %diff\t"  + str(int(const.long_duration_hrs)) + "hr. %diff\tPrice\t" + str(int(const.short_duration_min)) + " min. %diff\t"  + str(int(const.long_duration_hrs)) +  "hr. %diff\n==================================================================================================================================================")
+    #file.write("Stock\tMentions\n")
+    count = 0
+
+    for row in tbl:
+        #print(json.dumps(row))
         padding = ""
         if len(row[0]) < 4:
             padding = ' '
-        print(str(row[0]) + padding + "\t" + str(row[1]))
+        if count < const.list_length:
+            long_mention = "-"
+            short_mention = "-"
+            long_vol = "-"
+            short_vol = "-"
+            long_price = "-"
+            short_price = "-"
+            if (len(long_diff)>0):
+                long_mention = text_colorizer(long_diff[count][0])
+                long_vol = text_colorizer(round(long_diff[count][1],0))
+                long_price = text_colorizer(round(long_diff[count][2],2))
+            if (len(short_diff)>0) :
+                short_mention = text_colorizer(short_diff[count][0])
+                short_vol = text_colorizer(round(short_diff[count][1],0))
+                short_price = text_colorizer(round(short_diff[count][2],2))
+            vol = round(float(row[2]),0)
+            print(str(count+1) + ": " + padding + "\t" + str(row[0]) + padding + "\t" + str(row[1]) + padding + "\t\t" + short_mention  + padding + "\t\t" + long_mention + padding + "\t\t" + f"{vol:,}"+ padding + "\t" + short_vol  + padding + "\t\t" + long_vol + padding + "\t\t" + str(round(float(row[3]),2)) + padding + "\t" + short_price  + padding + "\t" + long_price)
+            print('-------------------------------------------------------------------------------------------------------------------------------------------------------')
+        #file.write(str(row[0]) + padding + "\t" + str(row[1]) + "\n")
+        count += 1
+    #file.close()
 
+def time_to_sleep():
+    day = datetime.utcnow().isoweekday()
+    hour =  datetime.utcnow().hour
+    minute = datetime.utcnow().minute
+    second = datetime.utcnow().second
+    tts = const.short_duration_min*60
+    if (day in range(1,7)):
+    #if (day in range(1,6)):
+        if (hour in range(0,23)):
+        #if (hour in range(14,23)):
+            tts = const.short_duration_min*60
+    ''' elif (hour > 22):#mon-fri 3pm-12am, sleep till 910 am
+            tts = (38 - hour)*3600 - minute*60 - second + 600
+        elif (hour < 14):#mon-fri pre-8am, sleep till 910 am
+            tts = (14-hour)*3600 - minute*60 - second + 600
+    elif (day > 5):#weekend, sleep till monday 910am
+        tts = (7-day)*24*3600 + (38-hour)*3600 - minute*60 - second + 600'''
+    #if tts > const.short_duration:
+        #d = datetime(1,1,1) + timedelta(seconds=tts)
+        #print("Sleeping for ")
+        #print("%d:%d:%d:%d" % (d.day-1, d.hour, d.minute, d.second))
+        #d = datetime.utcnow() + timedelta(seconds=tts)
+        #print("Wake up at " + d.strftime("%A"))
+        #print("%d:%d:%d" % (d.hour, d.minute, d.second))
+    return tts
 
 if __name__ == '__main__':
-    gen = get_submission(1)  # Get 1 day worth of submission
-    all_tbl, _, _ = get_freq_list(gen)
-    all_tbl = filter_tbl(all_tbl, 2)
-    print_tbl(all_tbl)
+    prev_tbl = {}
+    init_robinhood()
+    while True:
+        start_time = datetime.utcnow()
+        gen = get_submission(1)  # Get 1 day worth of submission
+        all_tbl = get_freq_list(gen)
+        all_tbl = filter_tbl(all_tbl, 2)
+        log_data = clean_append_log(all_tbl,"rps.json")
+        short_comp_tbl = prev_compare(all_tbl, prev_tbl)
+        long_comp_tbl = long_compare(all_tbl,log_data)
+        print_tbl(all_tbl, short_comp_tbl, long_comp_tbl)
+        prev_tbl = all_tbl
+ 
+        sleep_duration = time_to_sleep()
+        compute_time = (datetime.utcnow() - start_time).seconds + (datetime.utcnow() - start_time).microseconds/1000000.0
+        time.sleep(max(0.1,(sleep_duration-compute_time)))
