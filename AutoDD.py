@@ -143,11 +143,11 @@ def prev_compare(new_tbl,old_tbl):
         for old_row in old_tbl:
             if (new_row[0] == old_row[0]):
                 count_tbl[len(count_tbl)-1][0] = new_row[1] - old_row[1]
-                if (old_row[2] != 0):
+                if (float(old_row[2]) != 0):
                     count_tbl[len(count_tbl)-1][1] = 100*(int(float(new_row[2])) /int(float(old_row[2])) -1)
                 else:
                     count_tbl[len(count_tbl)-1][1] = 0
-                if (old_row[3] != 0):
+                if (float(old_row[3]) != 0):
                     count_tbl[len(count_tbl)-1][2] = 100.0*(float(new_row[3])/float(old_row[3]) - 1.0)
                 else:
                     count_tbl[len(count_tbl)-1][2] = 0                
