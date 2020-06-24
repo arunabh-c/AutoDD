@@ -29,35 +29,8 @@ from pytz import timezone
 import time
 import json
 from pathlib import Path
-from pyrh import Robinhood
+import urllib.request
 
-with open('user_details.txt') as f:
-    user_ids = f.readlines()
-    user_ids = [x.strip() for x in user_ids]
-
-def init_robinhood():
-    global my_trader
-    my_trader = Robinhood()
-    my_trader.login(username=user_ids[0], password=user_ids[1])
-
-def robinhood_calls(command, stk):
-    exec_flag = False
-    value_to_return = None
-    #try_counter = 0
-    executable = "my_trader." + command
-    #print(executable)
-    #while exec_flag == False:# and try_counter < 1:
-    try:
-            value_to_return = eval(executable)
-            print(ss)
-            exec_flag = True
-    except Exception:
-            import traceback
-            #print (str(datetime.utcnow()) + ' ***ROBINHOOD CALL EXCEPTION***: ' + stk + ", " + command + ", " + traceback.format_exc() + ": Waiting for 10 seconds before re-attempting..")
-            #try_counter = try_counter + 1
-            #time.sleep(10)
-    return value_to_return
-        
 def get_submission(n):
     """Returns a generator for the submission in past n days"""
     api = PushshiftAPI()
@@ -107,6 +80,20 @@ def get_freq_list(gen):
 
     return all_tbl
 
+def get_fidelity_stk_vals(stock):
+        weburl = urllib.request.urlopen("https://eresearch.fidelity.com/eresearch/goto/evaluate/snapshot.jhtml?symbols=" + stock + "&type=sq-NavBar")
+        data = str(weburl.read())
+        stk_data = [None,None]
+        if ("cannot be found" not in data and "symbol-value-sub\">" in data):
+            start = data.index("symbol-value-sub\">") + len("symbol-value-sub\">")
+            end = data.index("</span><span id=", start )
+            stk_data[0] = float(data[start:end])
+            start = data.index("Volume</th>") + len("Volume</th>") + 49
+            end = data.index("</td>", start )
+            stk_data[1] = int(data[start:end].replace(',',''))
+        return stk_data
+
+
 def filter_tbl(tbl, min):
     """
     Filter a frequency table
@@ -121,19 +108,15 @@ def filter_tbl(tbl, min):
         'CBS', 'SEC', 'NOW', 'OVER', 'ROPE', 'MOON', 'NYSE', 'ESPN','HELP','ETF','FCC','FAA','USPS'
     ]
     tbl = [row for row in tbl if (int(row[1]) > min and row[0] not in BANNED_WORDS)]
-    #tbl = [row for row in tbl if row[0] not in BANNED_WORDS]
     for row in tbl:
-        quote = robinhood_calls("quote_data('" + row[0] + "')",row[0])
-        fund = robinhood_calls("get_fundamentals('" + row[0] + "')",row[0])
-        #print(quote)
-        if (fund != None):
-            row.append(fund['volume'])
-            row.append(quote['last_trade_price'])
+        [price,volume] = get_fidelity_stk_vals(row[0])
+        if (price != None):
+            row.append(volume)
+            row.append(price)
         else:
             row.append(0)
             row.append(0)
-        #print(row)
-        #print(my_trader.get_fundamentals(row[0]))
+    tbl = [x for x in tbl if (x[2] != 0)]
     return tbl
     
 def prev_compare(new_tbl,old_tbl):
@@ -184,28 +167,19 @@ def clean_append_log(tbl, file_name):
             data = json_file.read()
             if (data != None and data != '' and data != 'null' and data != 'l'):
                 oldData = json.loads(data)
-                #print ("printing oldData: ")
-                #print (oldData)
                 oldData = clean_log(oldData)
     with open(file_name, 'w') as json_file:
-        # convert from Python dict-like structure to JSON format
         oldData[str(datetime.now(timezone('EST')))] = tbl
-        #print(oldData)
         jsoned_data = json.dumps(oldData)
         json_file.write(jsoned_data)
-     #with open(file_name, 'a') as outfile:
-     #   json.dump(json_dict, outfile)
     return oldData
 
 def print_tbl(tbl, short_diff,long_diff):
-    #file = open(file_name, 'w') 
     print(datetime.now(timezone('EST')))
     print("Rank\tStock\tMentions\t" + str(int(const.short_duration_min)) + " min. diff\t"  + str(int(const.long_duration_hrs)) + " hr. diff\tVolume\t\t" + str(int(const.short_duration_min)) + " min. %diff\t"  + str(int(const.long_duration_hrs)) + "hr. %diff\tPrice\t" + str(int(const.short_duration_min)) + " min. %diff\t"  + str(int(const.long_duration_hrs)) +  "hr. %diff\n==================================================================================================================================================")
-    #file.write("Stock\tMentions\n")
     count = 0
 
     for row in tbl:
-        #print(json.dumps(row))
         padding = ""
         if len(row[0]) < 4:
             padding = ' '
@@ -227,9 +201,7 @@ def print_tbl(tbl, short_diff,long_diff):
             vol = round(float(row[2]),0)
             print(str(count+1) + ": " + padding + "\t" + str(row[0]) + padding + "\t" + str(row[1]) + padding + "\t\t" + short_mention  + padding + "\t\t" + long_mention + padding + "\t\t" + f"{vol:,}"+ padding + "\t" + short_vol  + padding + "\t\t" + long_vol + padding + "\t\t" + str(round(float(row[3]),2)) + padding + "\t" + short_price  + padding + "\t" + long_price)
             print('-------------------------------------------------------------------------------------------------------------------------------------------------------')
-        #file.write(str(row[0]) + padding + "\t" + str(row[1]) + "\n")
         count += 1
-    #file.close()
 
 def time_to_sleep():
     day = datetime.utcnow().isoweekday()
@@ -238,9 +210,7 @@ def time_to_sleep():
     second = datetime.utcnow().second
     tts = const.short_duration_min*60
     if (day in range(1,7)):
-    #if (day in range(1,6)):
         if (hour in range(0,23)):
-        #if (hour in range(14,23)):
             tts = const.short_duration_min*60
     ''' elif (hour > 22):#mon-fri 3pm-12am, sleep till 910 am
             tts = (38 - hour)*3600 - minute*60 - second + 600
@@ -259,7 +229,6 @@ def time_to_sleep():
 
 if __name__ == '__main__':
     prev_tbl = {}
-    init_robinhood()
     while True:
         start_time = datetime.utcnow()
         gen = get_submission(1)  # Get 1 day worth of submission
