@@ -88,9 +88,12 @@ def get_fidelity_stk_vals(stock):
             start = data.index("symbol-value-sub\">") + len("symbol-value-sub\">")
             end = data.index("</span><span id=", start )
             stk_data[0] = float(data[start:end])
-            start = data.index("Volume</th>") + len("Volume</th>") + 49
-            end = data.index("</td>", start )
-            stk_data[1] = int(data[start:end].replace(',',''))
+            if ("Volume</th>" in data):
+                start = data.index("Volume</th>") + len("Volume</th>") + 49
+                end = data.index("</td>", start )
+                stk_data[1] = int(data[start:end].replace(',',''))
+            else:
+                stk_data[1] = 0
         return stk_data
 
 
