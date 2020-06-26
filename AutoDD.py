@@ -83,7 +83,7 @@ def get_freq_list(gen):
 def get_fidelity_stk_vals(stock):
         weburl = urllib.request.urlopen("https://eresearch.fidelity.com/eresearch/goto/evaluate/snapshot.jhtml?symbols=" + stock + "&type=sq-NavBar")
         data = str(weburl.read())
-        stk_data = [None,None]
+        stk_data = [None,None,None]
         if ("cannot be found" not in data and "symbol-value-sub\">" in data):
             start = data.index("symbol-value-sub\">") + len("symbol-value-sub\">")
             end = data.index("</span><span id=", start )
@@ -94,6 +94,13 @@ def get_fidelity_stk_vals(stock):
                 stk_data[1] = int(data[start:end].replace(',',''))
             else:
                 stk_data[1] = 0
+            if ("companyName\">" in data):
+                start = data.index("companyName\">") + len("companyName\">")
+                end = data.index("</h2>", start )
+                stk_data[2] = data[start:end]
+                #print(stk_data[2])
+            else:
+                stk_data[2] = ""
         return stk_data
 
 
@@ -112,7 +119,7 @@ def filter_tbl(tbl, min):
     ]
     tbl = [row for row in tbl if (int(row[1]) > min and row[0] not in BANNED_WORDS)]
     for row in tbl:
-        [price,volume] = get_fidelity_stk_vals(row[0])
+        [price,volume,name] = get_fidelity_stk_vals(row[0])
         if (price != None):
             row.append(volume)
             row.append(price)
@@ -234,6 +241,7 @@ if __name__ == '__main__':
     prev_tbl = {}
     while True:
         start_time = datetime.utcnow()
+        print("Gathering data...")
         gen = get_submission(1)  # Get 1 day worth of submission
         all_tbl = get_freq_list(gen)
         all_tbl = filter_tbl(all_tbl, 2)
@@ -245,4 +253,5 @@ if __name__ == '__main__':
  
         sleep_duration = time_to_sleep()
         compute_time = (datetime.utcnow() - start_time).seconds + (datetime.utcnow() - start_time).microseconds/1000000.0
+        print("Run time: " + str(compute_time/60.0) + " minutes")
         time.sleep(max(0.1,(sleep_duration-compute_time)))
