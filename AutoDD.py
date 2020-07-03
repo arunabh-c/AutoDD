@@ -80,6 +80,41 @@ def get_freq_list(gen):
 
     return all_tbl
 
+def extract_company_name(stk_name):
+    BANNED_WORDS = ['&#x20;LP', '&#x20;LLC', '&#x20;INDUSTRIES', '&#x20;INC', '&#x20;INCORPORATED', '&#x20;CORP', '&#x20;LTD']
+    for item in BANNED_WORDS:
+        if item in stk_name:
+            stk_name = stk_name.replace(item,'')
+            stk_name = stk_name.replace('&#x20;','%20')
+    return stk_name
+    
+def retrieve_news(stk_name):
+     stk_news_data = [None,None,None]
+     weburl = urllib.request.urlopen("https://news.google.com/search?q=%22" + stk_name + "%22%20when%3A30d&hl=en-US&gl=US&ceid=US%3Aen")
+     data = str(weburl.read())
+     count = 0
+     news_list = []
+     while (count < const.news_item_count):
+        if "?hl=en-US&amp;gl=US&amp;ceid=US%3Aen\" class=\"DY5T1d\" >" in data:
+            start = data.index("?hl=en-US&amp;gl=US&amp;ceid=US%3Aen\" class=\"DY5T1d\" >") + len("?hl=en-US&amp;gl=US&amp;ceid=US%3Aen\" class=\"DY5T1d\" >")
+            regex = re.compile('</a></h.><div jsname=\"')
+            end = data.index(re.findall(regex,data)[0], start )
+            stk_news_data[0] = (data[start:end])
+            #print(stk_news_data[0])
+            start = data.index("class=\"wEwyrc AVN2gc uQIVzc Sksgp\">") + len("class=\"wEwyrc AVN2gc uQIVzc Sksgp\">")
+            end = data.index("</a><time class=\"", start )
+            stk_news_data[1] = (data[start:end])
+            regex = re.compile('datetime=\"2...-..-..T..:..:..Z\">')
+            #print (re.findall(regex,data)[0])
+            start = data.index(re.findall(regex,data)[0]) + len(re.findall(regex,data)[0])
+            end = data.index("</time></div>", start )
+            stk_news_data[2] = (data[start:end])
+            data = data[end:]
+            news_list.append(stk_news_data[:])
+            count += 1
+     return news_list
+
+
 def get_fidelity_stk_vals(stock):
         weburl = urllib.request.urlopen("https://eresearch.fidelity.com/eresearch/goto/evaluate/snapshot.jhtml?symbols=" + stock + "&type=sq-NavBar")
         data = str(weburl.read())
@@ -99,6 +134,8 @@ def get_fidelity_stk_vals(stock):
                 end = data.index("</h2>", start )
                 stk_data[2] = data[start:end]
                 #print(stk_data[2])
+                #stk_data[2] = extract_company_name(stk_data[2])
+                #retrieve_news(stk_data[2])
             else:
                 stk_data[2] = ""
         return stk_data
@@ -123,9 +160,11 @@ def filter_tbl(tbl, min):
         if (price != None):
             row.append(volume)
             row.append(price)
+            row.append(name)
         else:
             row.append(0)
             row.append(0)
+            row.append("")
     tbl = [x for x in tbl if (x[2] != 0)]
     return tbl
     
@@ -212,6 +251,18 @@ def print_tbl(tbl, short_diff,long_diff):
             print(str(count+1) + ": " + padding + "\t" + str(row[0]) + padding + "\t" + str(row[1]) + padding + "\t\t" + short_mention  + padding + "\t\t" + long_mention + padding + "\t\t" + f"{vol:,}"+ padding + "\t" + short_vol  + padding + "\t\t" + long_vol + padding + "\t\t" + str(round(float(row[3]),2)) + padding + "\t" + short_price  + padding + "\t" + long_price)
             print('-------------------------------------------------------------------------------------------------------------------------------------------------------')
         count += 1
+        
+def print_news_list(tbl):
+    count = 0
+    for row in tbl:
+        if count < const.list_length:
+            print(row[0])
+            cleaned_stk_name = extract_company_name(row[4])
+            news_list = retrieve_news(cleaned_stk_name)
+            #print(news_list)
+            for item in news_list:
+                print(item[0] + ", " + item[1] + ", " + item[2])
+        count += 1
 
 def time_to_sleep():
     day = datetime.utcnow().isoweekday()
@@ -249,6 +300,7 @@ if __name__ == '__main__':
         short_comp_tbl = prev_compare(all_tbl, prev_tbl)
         long_comp_tbl = long_compare(all_tbl,log_data)
         print_tbl(all_tbl, short_comp_tbl, long_comp_tbl)
+        print_news_list(all_tbl)
         prev_tbl = all_tbl
  
         sleep_duration = time_to_sleep()
